@@ -1,0 +1,125 @@
+"""SONiC Linux kernel — migrated from rules/linux-kernel.mk.
+
+Downloads kernel source from Debian security pool, applies SONiC patches,
+builds via dpkg-buildpackage. Produces linux-image and linux-headers .debs.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+KERNEL_VERSION = "6.1.123"
+KERNEL_SUBVERSION = "1"
+KVERSION_SHORT = "6.1.0-29-2"
+KVERSION = KVERSION_SHORT + "-amd64"
+
+filegroup(
+    name = "kernel_patches",
+    srcs = glob(["patch/**"], allow_empty = True),
+)
+
+filegroup(
+    name = "kernel_config",
+    srcs = glob(["Makefile", "manage-config", "config*"], allow_empty = True),
+)
+
+genrule(
+    name = "linux_kernel_debs",
+    srcs = [":kernel_patches", ":kernel_config"],
+    outs = [
+        "linux-headers-" + KVERSION_SHORT + "-common_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_all.deb",
+        "linux-headers-" + KVERSION + "_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_amd64.deb",
+        "linux-image-" + KVERSION + "-unsigned_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_amd64.deb",
+    ],
+    cmd = """
+set -euo pipefail
+FIRST_OUT=$$(echo $(OUTS) | awk '{print $$1}')
+OUT_DIR=$$(cd $$(dirname $$FIRST_OUT) && pwd)
+
+# Find the kernel source directory (contains Makefile)
+SRC_DIR=""
+for f in $(locations :kernel_config); do
+  case "$$f" in */Makefile) SRC_DIR=$$(cd $$(dirname "$$f") && pwd); break;; esac
+done
+[ -z "$$SRC_DIR" ] && { echo "Cannot find kernel Makefile"; exit 1; }
+
+docker run --rm --platform linux/amd64 \
+  -v "$$SRC_DIR:/kernel-src:ro" \
+  -v "$$OUT_DIR:/output" \
+  -e DEBIAN_FRONTEND=noninteractive \
+  -e CONFIGURED_ARCH=amd64 \
+  debian:bookworm-slim \
+  bash -o pipefail -c '
+    unset SOURCE_DATE_EPOCH
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends \
+      build-essential dpkg-dev fakeroot debhelper bc rsync kmod cpio \
+      python3 libelf-dev libssl-dev bison flex dwarves wget ca-certificates \
+      xz-utils git stgit python3-jinja2 python3-dacite kernel-wedge quilt \
+      dh-python lz4 zstd
+    cd /tmp
+    cp -a /kernel-src/* .
+    git config --global user.email build@sonic
+    git config --global user.name sonic
+    # Run the SONiC kernel Makefile
+    NPROC=$$(nproc 2>/dev/null || echo 4)
+    # Fix: linux-cpupower.install expected by dh_install but not in SONiC config.
+    # The Makefile uses fakeroot make -f debian/rules (no dpkg-buildpackage).
+    # Inject a touch after the stg import step (line with "popd").
+    sed -i "s|popd|popd; touch linux-*/debian/linux-cpupower.install 2>/dev/null || true|" Makefile
+    make DEST=/output CONFIGURED_ARCH=amd64 CONFIGURED_PLATFORM=vs SONIC_CONFIG_MAKE_JOBS=$$NPROC -j$$NPROC 2>&1 | tail -30
+    echo "=== kernel debs ==="
+    ls -lh /output/*.deb 2>/dev/null | head -5
+  '
+
+for out in $(OUTS); do
+  [ -s "$$out" ] || { echo "FAIL: $$out missing"; exit 1; }
+done
+""",
+    tags = ["requires-docker", "no-sandbox", "no-cache"],
+)
+
+genrule(
+    name = "kernel_modules_tar",
+    srcs = [":linux_kernel_debs"],
+    outs = ["modules.tar.gz"],
+    cmd = """
+set -euo pipefail
+OUT=$$(cd $$(dirname $(OUTS)) && pwd)/$$(basename $(OUTS))
+touch "$$OUT"
+FIRST_DEB=""
+for f in $(SRCS); do
+  case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
+done
+[ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
+docker run --rm --platform linux/amd64 \
+  -v "$$FIRST_DEB:/image.deb:ro" \
+  -v "$$OUT:/output/modules.tar.gz" \
+  debian:bookworm-slim \
+  bash -c 'dpkg-deb -x /image.deb /tmp/root && tar -czf /output/modules.tar.gz -C /tmp/root lib/modules' 2>&1 | tail -3
+""",
+    tags = ["requires-docker", "no-sandbox"],
+)
+
+genrule(
+    name = "vmlinuz",
+    srcs = [":linux_kernel_debs"],
+    outs = ["vmlinuz-extracted"],
+    cmd = """
+set -euo pipefail
+OUT=$$(cd $$(dirname $(OUTS)) && pwd)/$$(basename $(OUTS))
+touch "$$OUT"
+FIRST_DEB=""
+for f in $(SRCS); do
+  case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
+done
+[ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
+docker run --rm --platform linux/amd64 \
+  -v "$$FIRST_DEB:/image.deb:ro" \
+  -v "$$OUT:/output/vmlinuz" \
+  debian:bookworm-slim \
+  bash -c 'dpkg-deb -x /image.deb /tmp/root && cp /tmp/root/boot/vmlinuz-* /output/vmlinuz' 2>&1 | tail -3
+""",
+    tags = ["requires-docker", "no-sandbox"],
+)
+
+alias(name = "linux_image", actual = ":linux_kernel_debs", visibility = ["//visibility:public"])
+alias(name = "linux_headers", actual = ":linux_kernel_debs", visibility = ["//visibility:public"])
