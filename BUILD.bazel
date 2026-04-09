@@ -61,11 +61,21 @@ docker run --rm --platform linux/amd64 \
     git config --global user.name sonic
     # Run the SONiC kernel Makefile
     NPROC=$$(nproc 2>/dev/null || echo 4)
-    # Fix: linux-cpupower.install expected by dh_install but not in SONiC config.
-    # The Makefile uses fakeroot make -f debian/rules (no dpkg-buildpackage).
-    # Inject a touch after the stg import step (line with "popd").
-    sed -i "s|popd|popd; touch linux-*/debian/linux-cpupower.install 2>/dev/null || true|" Makefile
+    # Fix: dh_install expects debian/linux-cpupower.install but SONiC config
+    # does not build cpupower. Create the file as a background watcher since
+    # the kernel source is extracted during make.
+    (while true; do
+      for d in /tmp/linux-*/debian; do
+        if [ -d "$$d" ] && [ ! -f "$$d/linux-cpupower.install" ]; then
+          touch "$$d/linux-cpupower.install"
+          echo "Created $$d/linux-cpupower.install"
+        fi
+      done
+      sleep 2
+    done) &
+    WATCHER_PID=$$!
     make DEST=/output CONFIGURED_ARCH=amd64 CONFIGURED_PLATFORM=vs SONIC_CONFIG_MAKE_JOBS=$$NPROC -j$$NPROC 2>&1 | tail -30
+    kill $$WATCHER_PID 2>/dev/null || true
     echo "=== kernel debs ==="
     ls -lh /output/*.deb 2>/dev/null | head -5
   '
