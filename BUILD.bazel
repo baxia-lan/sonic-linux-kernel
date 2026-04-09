@@ -62,12 +62,11 @@ docker run --rm --platform linux/amd64 \
     # Run the SONiC kernel Makefile
     NPROC=$$(nproc 2>/dev/null || echo 4)
     # Fix: dh_install expects debian/linux-cpupower.install but SONiC
-    # config does not build cpupower. Insert touch BEFORE the build
-    # commands run (before "fakeroot make -f debian/rules").
-    sed -i "/fakeroot make -f debian\\/rules.*binary-indep/i\\
-\\ttouch debian/linux-cpupower.install" Makefile
-    echo "=== Makefile patch (cpupower touch before build) ==="
-    grep -B1 -A1 "cpupower" Makefile || echo "WARN: patch not applied"
+    # config does not build cpupower. Use sed to replace the first
+    # fakeroot line with: touch + fakeroot (using ; on same line).
+    sed -i "s|fakeroot make -f debian/rules -j|touch debian/linux-cpupower.install; fakeroot make -f debian/rules -j|" Makefile
+    echo "=== Makefile patch ==="
+    grep "cpupower" Makefile
     make DEST=/output CONFIGURED_ARCH=amd64 CONFIGURED_PLATFORM=vs SONIC_CONFIG_MAKE_JOBS=$$NPROC -j$$NPROC 2>&1 | tail -50
     echo "=== kernel debs ==="
     ls -lh /output/*.deb 2>/dev/null | head -5
