@@ -31,8 +31,7 @@ genrule(
     ],
     cmd = """
 set -euo pipefail
-FIRST_OUT=$$(echo $(OUTS) | awk '{print $$1}')
-OUT_DIR=$$(cd $$(dirname $$FIRST_OUT) && pwd)
+STAGING=$$(mktemp -d)
 
 # Find the kernel source directory (contains Makefile)
 SRC_DIR=""
@@ -43,10 +42,10 @@ done
 
 docker run --rm --platform linux/amd64 \
   -v "$$SRC_DIR:/kernel-src:ro" \
-  -v "$$OUT_DIR:/output" \
+  -v "$$STAGING:/output" \
   -e DEBIAN_FRONTEND=noninteractive \
   -e CONFIGURED_ARCH=amd64 \
-  debian:bookworm-slim \
+  debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d \
   bash -o pipefail -c '
     unset SOURCE_DATE_EPOCH
     apt-get update -qq
@@ -78,8 +77,16 @@ docker run --rm --platform linux/amd64 \
   '
 
 for out in $(OUTS); do
-  [ -s "$$out" ] || { echo "FAIL: $$out missing"; exit 1; }
+  base=$$(basename "$$out")
+  if [ -f "$$STAGING/$$base" ]; then
+    cp "$$STAGING/$$base" "$$out"
+  else
+    echo "FAIL: $$base not in staging"
+    ls "$$STAGING"/*.deb 2>/dev/null || true
+    exit 1
+  fi
 done
+rm -rf "$$STAGING"
 """,
     tags = ["requires-docker", "no-sandbox", "no-cache"],
 )
@@ -90,8 +97,7 @@ genrule(
     outs = ["modules.tar.gz"],
     cmd = """
 set -euo pipefail
-OUT=$$(cd $$(dirname $(OUTS)) && pwd)/$$(basename $(OUTS))
-touch "$$OUT"
+STAGING=$$(mktemp -d)
 FIRST_DEB=""
 for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
@@ -99,9 +105,21 @@ done
 [ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
 docker run --rm --platform linux/amd64 \
   -v "$$FIRST_DEB:/image.deb:ro" \
-  -v "$$OUT:/output/modules.tar.gz" \
-  debian:bookworm-slim \
+  -v "$$STAGING:/output" \
+  debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d \
   bash -c 'dpkg-deb -x /image.deb /tmp/root && tar -czf /output/modules.tar.gz -C /tmp/root lib/modules' 2>&1 | tail -3
+
+for out in $(OUTS); do
+  base=$$(basename "$$out")
+  if [ -f "$$STAGING/$$base" ]; then
+    cp "$$STAGING/$$base" "$$out"
+  else
+    echo "FAIL: $$base not in staging"
+    ls "$$STAGING"/* 2>/dev/null || true
+    exit 1
+  fi
+done
+rm -rf "$$STAGING"
 """,
     tags = ["requires-docker", "no-sandbox"],
 )
@@ -112,8 +130,7 @@ genrule(
     outs = ["vmlinuz-extracted"],
     cmd = """
 set -euo pipefail
-OUT=$$(cd $$(dirname $(OUTS)) && pwd)/$$(basename $(OUTS))
-touch "$$OUT"
+STAGING=$$(mktemp -d)
 FIRST_DEB=""
 for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
@@ -121,9 +138,18 @@ done
 [ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
 docker run --rm --platform linux/amd64 \
   -v "$$FIRST_DEB:/image.deb:ro" \
-  -v "$$OUT:/output/vmlinuz" \
-  debian:bookworm-slim \
+  -v "$$STAGING:/output" \
+  debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d \
   bash -c 'dpkg-deb -x /image.deb /tmp/root && cp /tmp/root/boot/vmlinuz-* /output/vmlinuz' 2>&1 | tail -3
+
+if [ -f "$$STAGING/vmlinuz" ]; then
+  cp "$$STAGING/vmlinuz" $(OUTS)
+else
+  echo "FAIL: vmlinuz not in staging"
+  ls "$$STAGING"/* 2>/dev/null || true
+  exit 1
+fi
+rm -rf "$$STAGING"
 """,
     tags = ["requires-docker", "no-sandbox"],
 )
