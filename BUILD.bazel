@@ -103,8 +103,9 @@ for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
 done
 [ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
+ABS_DEB=$$(cd $$(dirname "$$FIRST_DEB") && pwd)/$$(basename "$$FIRST_DEB")
 docker run --rm --platform linux/amd64 \
-  -v "$$FIRST_DEB:/image.deb:ro" \
+  -v "$$ABS_DEB:/image.deb:ro" \
   -v "$$STAGING:/output" \
   debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d \
   bash -c 'dpkg-deb -x /image.deb /tmp/root && tar -czf /output/modules.tar.gz -C /tmp/root lib/modules' 2>&1 | tail -3
@@ -136,8 +137,9 @@ for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
 done
 [ -z "$$FIRST_DEB" ] && { echo "No linux-image deb"; exit 1; }
+ABS_DEB=$$(cd $$(dirname "$$FIRST_DEB") && pwd)/$$(basename "$$FIRST_DEB")
 docker run --rm --platform linux/amd64 \
-  -v "$$FIRST_DEB:/image.deb:ro" \
+  -v "$$ABS_DEB:/image.deb:ro" \
   -v "$$STAGING:/output" \
   debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d \
   bash -c 'dpkg-deb -x /image.deb /tmp/root && cp /tmp/root/boot/vmlinuz-* /output/vmlinuz' 2>&1 | tail -3
