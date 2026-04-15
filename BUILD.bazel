@@ -6,9 +6,12 @@ builds via dpkg-buildpackage. Produces linux-image and linux-headers .debs.
 
 package(default_visibility = ["//visibility:public"])
 
-KERNEL_VERSION = "6.1.123"
+# Must match rules/linux-kernel.mk: KERNEL_VERSION=6.12.41, KERNEL_ABISUFFIX=+deb13
+KERNEL_VERSION = "6.12.41"
 KERNEL_SUBVERSION = "1"
-KVERSION_SHORT = "6.1.0-29-2"
+KERNEL_ABISUFFIX = "+deb13"
+KERNEL_FEATURESET = "sonic"
+KVERSION_SHORT = KERNEL_VERSION + KERNEL_ABISUFFIX + "-" + KERNEL_FEATURESET
 KVERSION = KVERSION_SHORT + "-amd64"
 
 filegroup(
@@ -25,8 +28,11 @@ genrule(
     name = "linux_kernel_debs",
     srcs = [":kernel_patches", ":kernel_config"],
     outs = [
-        "linux-headers-" + KVERSION_SHORT + "-common_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_all.deb",
+        # LINUX_HEADERS_COMMON: linux-headers-$(KERNEL_VERSION)$(KERNEL_ABISUFFIX)-common-$(KERNEL_FEATURESET)_...
+        "linux-headers-" + KERNEL_VERSION + KERNEL_ABISUFFIX + "-common-" + KERNEL_FEATURESET + "_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_all.deb",
+        # LINUX_HEADERS: linux-headers-$(KVERSION)_...
         "linux-headers-" + KVERSION + "_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_amd64.deb",
+        # LINUX_KERNEL: linux-image-$(KVERSION)-unsigned_...
         "linux-image-" + KVERSION + "-unsigned_" + KERNEL_VERSION + "-" + KERNEL_SUBVERSION + "_amd64.deb",
     ],
     cmd = """
@@ -71,7 +77,10 @@ docker run --rm --platform linux/amd64 \
     sed -i "s|fakeroot make -f debian/rules.gen -j|sed -i -f /tmp/fix-cpupower.sed debian/control; fakeroot make -f debian/rules.gen -j|" Makefile
     echo "=== Makefile cpupower patches ==="
     grep -n "cpupower" Makefile
-    make DEST=/output CONFIGURED_ARCH=amd64 CONFIGURED_PLATFORM=vs SONIC_CONFIG_MAKE_JOBS=$$NPROC -j$$NPROC 2>&1 | tail -50
+    make DEST=/output CONFIGURED_ARCH=amd64 CONFIGURED_PLATFORM=vs \
+      KERNEL_VERSION=6.12.41 KERNEL_SUBVERSION=1 \
+      KVERSION_SHORT=6.12.41+deb13-sonic KVERSION=6.12.41+deb13-sonic-amd64 \
+      SONIC_CONFIG_MAKE_JOBS=$$NPROC -j$$NPROC 2>&1 | tail -50
     echo "=== kernel debs ==="
     ls -lh /output/*.deb 2>/dev/null | head -5
   '
