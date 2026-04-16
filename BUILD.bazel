@@ -31,7 +31,11 @@ genrule(
     ],
     cmd = """
 set -euo pipefail
-STAGING=$$(mktemp -d)
+# Temp dir must be under the Bazel execroot so that `docker run -v` can
+# see it from the host docker daemon on Cloud Build (DinD). /tmp is
+# not shared across the DinD boundary; /workspace is.
+mkdir -p "$$PWD/.bazel-tmp"
+STAGING=$$(mktemp -d -p "$$PWD/.bazel-tmp")
 
 # Find the kernel source directory (contains Makefile)
 SRC_DIR=""
@@ -97,7 +101,9 @@ genrule(
     outs = ["modules.tar.gz"],
     cmd = """
 set -euo pipefail
-STAGING=$$(mktemp -d)
+# Temp dir must be under execroot for DinD mounts (see linux_kernel_debs).
+mkdir -p "$$PWD/.bazel-tmp"
+STAGING=$$(mktemp -d -p "$$PWD/.bazel-tmp")
 FIRST_DEB=""
 for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
@@ -131,7 +137,9 @@ genrule(
     outs = ["vmlinuz-extracted"],
     cmd = """
 set -euo pipefail
-STAGING=$$(mktemp -d)
+# Temp dir must be under execroot for DinD mounts (see linux_kernel_debs).
+mkdir -p "$$PWD/.bazel-tmp"
+STAGING=$$(mktemp -d -p "$$PWD/.bazel-tmp")
 FIRST_DEB=""
 for f in $(SRCS); do
   case "$$f" in *linux-image-*) FIRST_DEB="$$f"; break;; esac
